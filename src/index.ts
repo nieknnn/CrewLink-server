@@ -42,25 +42,46 @@ interface Signal {
 	to: string;
 }
 
-app.set('view engine', 'pug')
-app.use(morgan('combined'))
+app.set('view engine', 'pug');
+app.use(morgan('combined'));
+
+// TRUST_PROXY can be used to set which proxies can be trusted based on IP
+// address. This is an advanced, undocumented environment variable.
+// For more details see: https://expressjs.com/en/guide/behind-proxies.html
+app.set('trust proxy', process.env.TRUST_PROXY ?? true );
 
 let connectionCount = 0;
 let address = process.env.ADDRESS;
-if (!address) {
-	logger.error('You must set the ADDRESS environment variable.');
-	process.exit(1);
+
+/**
+ * Derives the address used from ExpressJS Request properties.
+ * The ExpressJS Request properties for hostname and protocol take into account
+ * the x-forwarded- parameters, so the resulting address is proxy friendly.
+ * @param req An HTTPRequest object.
+ */
+function addressFromRequest(req: express.Request) {
+	let p = ( 'x-forwarded-port' in req.headers ? req.headers['x-forwarded-port'] : port);
+	if ( p == '80' || p == '443' ) {
+		return `${req.protocol}://${req.hostname}`;
+	} else {
+		return `${req.protocol}://${req.hostname}:${p}`
+	}
 }
 
-app.get('/', (_, res) => {
-	res.render('index', { connectionCount, address });
+if (!address) {
+	logger.info('ADDRESS environment variable not set.');
+	logger.info('Advertised server address will be derived from HTTP request headers.');
+}
+
+app.get('/', (req, res) => {
+	res.render('index', { connectionCount, address: (address || addressFromRequest(req)), headers: req.headers });
 });
 
 app.get('/health', (req, res) => {
 	res.json({
 		uptime: process.uptime(),
 		connectionCount,
-		address,
+		address: (address || addressFromRequest(req)),
 		name: process.env.NAME
 	});
 })
@@ -168,5 +189,5 @@ io.on('connection', (socket: socketIO.Socket) => {
 
 server.listen(port);
 (async () => {
-	logger.info('CrewLink Server started: %s', address);
+	logger.info('CrewLink Server started: %s', address || '[ADDRESS not set]');
 })();
